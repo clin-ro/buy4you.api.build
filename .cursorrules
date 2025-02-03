@@ -1,0 +1,412 @@
+This project uses NestJS for the API of buy4you.
+
+The project uses Mongoose for the database of buy4you.
+
+The project uses no unit tests in the api.
+
+In controllers and large files use //#region and //#endregion to organize the code and make everything easy to read.
+
+------------------------------------------------------------------------------------------------------------
+//#region paths
+------------------------------------------------------------------------------------------------------------
+All imports must be relative to the project root.
+"baseUrl": "./",
+    "paths": {
+      "@/*": [
+        "src/*"
+      ]
+    }
+------------------------------------------------------------------------------------------------------------
+//#endregion paths
+------------------------------------------------------------------------------------------------------------
+//#region project structure
+------------------------------------------------------------------------------------------------------------
+
+The project is structured as follows:
+
+src/
+    - app.module.ts
+    - app.controller.ts
+    - app.service.ts
+
+    // Feature Modules (e.g., users, products, etc.)
+    - <feature-name>
+        - <feature-name>.module.ts
+        - <feature-name>.controller.ts
+        - <feature-name>.service.ts
+        - [optional] <feature-name>.guard.ts
+    
+    // Reusable Resource Modules (e.g., notifications, orders, etc.)
+    - resources:
+        - <resource-name>
+            - <resource-name>.module.ts
+            - <resource-name>.service.ts
+            - dto
+                - <resource-name>.dto.ts
+                - <resource-name>-response.dto.ts
+    
+    // Utility Modules (e.g., mailer, minio, etc.)
+    - utils:
+        - <utility-name>
+            - <utility-name>.module.ts
+            - <utility-name>.service.ts
+            - [optional] <utility-name>-webhook.service.ts
+            - [optional] templates/
+        - utils.module.ts //Global module
+            - mailer
+            - minio
+            - stripe
+            - mongoose
+            - sms // not implemented yet
+    
+    // Schema Modules
+    - schemas:
+        - mongo
+            - <schema-name>.schema.ts
+        - schemas.module.ts //Global module
+           - job-site
+           - order
+           - quotation
+           - notification
+           - subscription-plan
+           - stripe-product
+           - stripe-price
+           - stripe-payment-link
+
+    // Authentication Module
+    - auth
+        - dto/
+            - auth-response.dto.ts
+            - auth.dto.ts
+        - auth.controller.ts
+        - auth.service.ts
+        - decorators/
+            - current-user.decorator.ts
+            - roles.decorator.ts
+        - strategies/
+            - api-key.strategy.ts
+            - jwt.strategy.ts
+        - enums/
+            - role.enum.ts
+        - auth.module.ts
+        - guards/
+            - roles.guard.ts
+            - jwt-auth.guard.ts
+            - api-key.guard.ts
+            - [optional] admin.guard.ts
+        - interfaces/
+            - jwt-payload.interface.ts
+
+    //Swagger Documentation
+    - swagger
+        - <feature-name>.dto.ts // For each feature module
+      - admin.dto.ts
+        - auth.dto.ts
+        - supplier.dto.ts
+        - buyer.dto.ts
+------------------------------------------------------------------------------------------------------------
+//#endregion project structure
+------------------------------------------------------------------------------------------------------------
+//#region imports
+------------------------------------------------------------------------------------------------------------
+Mongoose related code should only be imported in `@/schemas/schemas.module.ts` and schema files.
+------------------------------------------------------------------------------------------------------------
+//#endregion imports
+------------------------------------------------------------------------------------------------------------
+//#region business logic
+------------------------------------------------------------------------------------------------------------
+The API facilitates interactions between admins, buyers (both companies and individuals), and suppliers, each with specific roles, permissions, and workflows.
+
+**User Roles and Permissions:**
+
+    - **Admin:**
+        -   **Full Access:** Manages all system resources, users, roles, settings, and data. The admin is global for all the app. it is the admin of Buy4You.
+        -   **User Management:** Creates, edits, deletes users; assigns roles; manages buyer's subscription plans.
+        -   **Order Management:** Views all orders; selects suppliers; sends notifications; manages partial fulfillment; cancels orders.
+        -  **Subscription Management:** Manages subscription plans, pricing, and included orders and stripe products and stripe prices and stripe payment links.
+        -   **Notification Management:** Manages settings; sends notifications.
+        -   **Payment Settings:** Controls whether orders require payment, configurable at buyer level.
+
+    - **Buyer (Company or Individual):**
+        -   **Profile Management:** Completes and manages their profile, which includes either company or individual information.
+        -   **Order Management:** Creates and manages their own orders; views order status.
+        -   **Job Site Management:** Creates and manages job sites; adds other buyers to their job sites.
+         -  **Quotation Management (Self-Managed):** Views, accepts, or rejects quotations for their orders.
+        -   **Subscription Management:** Monitors subscription status; manages overage payments.
+        -   **Payment Settings:** Inherits payment requirement settings from admin configuration.
+
+    -   **Supplier:**
+        -   **Order Management:** Receives order notifications; submits quotations; manages company profile; fulfills items based on accepted quotes.
+
+**Key Processes and Notifications:**
+
+    - **1. Profile Completion (Buyer):**
+        -   **Legal Options:** Buyers can register as either a "Company" or an "Individual."
+        -   **Company Profile Fields:** Company Name, Company Address, Main Contact Name, Email, Phone Number.
+        -   **Individual Profile Fields:** Full Name, Address, Email, Phone Number.
+        -   **Validation Rules:** Email and phone number formats.
+        -   **Status:** Incomplete, Pending Review, or Completed.
+        -   **Notifications:**
+            - Admin receives in-app notification when a profile is submitted for review
+            - Buyer receives in-app notification and email when profile is approved/rejected
+            - Admin receives in-app notification when buyer updates profile after rejection
+
+    - **2. Order Placement (Buyer):**
+          - The buyers can manage their own orders and job sites and profiles.
+         - The buyers cannot manage job sites and orders until the profile is completed.
+         - The buyers can add more buyers to their job sites.
+        -   Includes product details, quantity, and delivery address.
+        -   Added to a queue for asynchronous processing.
+        -   Initial Status: Pending.
+        -   **Notifications:**
+            - Admin receives in-app notification for new order placement
+            - Buyer receives in-app notification and email order confirmation
+            - Suppliers receive in-app notification and email when selected for an order
+            - All parties receive notifications for order status changes
+
+   -  **3. Job Site Creation and Management (Buyer):**
+           - The buyers can create a job site and it is added to the queue.
+        -   Includes address, contact, and related information.
+        -   Added to a queue for asynchronous processing.
+        -   **Invitations and Notifications:**
+            - Invited buyers receive both in-app notification and email with invitation link/QR code
+            - Inviting buyer receives in-app notification when invitation is accepted/rejected
+            - Email templates for:
+                * Initial invitation with link/QR code
+                * Reminder email for pending invitations (after 3 days)
+            - In-app notifications for:
+                * New invitation received
+                * Invitation accepted/rejected
+                * Invitation expired
+                * Job site updates (address changes, new buyers added)
+
+    -   **4. Order Assignment (Admin):**
+        -  The admin sends the order to some list of suppliers. (provisory until the business logic for automatic order routing is implemented) // add an endpoint that allows the admin to give the order id and the list of suppliers to send the order to.
+        -   Admin selects suppliers based on location, expertise, rating, pricing, and delivery time.
+        -   Suppliers are notified of new assignments via email.
+        -   Order is initially assigned to a list of suppliers.
+        -   **Notifications:**
+            - Suppliers receive in-app notification and email for new order assignments
+            - Buyer receives in-app notification when suppliers are assigned
+            - Admin receives in-app notification when suppliers view the order
+
+    -   **5. Quotation Submission (Supplier):**
+       - the suppliers receive an email with the order details and an url where they can upload their quotation pdf and add the details of the quotation.
+        -   Includes price, delivery terms, and a PDF quotation document.
+        -   Supplier specifies which items they can fulfill.
+        -   Suppliers can requote on remaining items of partially filled orders.
+         -  Initial quote is for the entire order.
+        -   **Notifications:**
+            - Admin and buyer receive in-app notification for new quotation submissions
+            - Email notifications for self-managed buyers only
+            - Suppliers receive confirmation of quotation submission
+            - All suppliers receive notification when order is partially filled
+        -   **LLM Integration: Quotation Parsing (Server-Side):**
+            - Suppliers upload a PDF quotation document.
+            - The backend server processes the PDF using a library like `pdf-parse` or similar to extract text content.
+            - The extracted text is then sent to an LLM (e.g., using the Vercel AI SDK `@ai-sdk/google` or similar) for structured data extraction.
+            - The `streamObject` function from the ai-sdk (or similar streaming approach) is used to send prompts to the model and receive structured data back (e.g., JSON).
+            - The backend uses `partialObjectStream` (or similar) to process the generated JSON data in chunks/partials as it comes in, instead of waiting for the entire object.
+            - The backend defines a `QuotationSchema` to define the expected structure of the extracted data and validate the data before sending it to the database.
+            - The backend defines a `QuotationItemsSchema` (using Zod or similar) to define the expected structure of the extracted data, including a mechanism (just include, orderItemId in the zod schema for the items) to confirm that the items in the quotation match the items in the original order, and validate the data before sending it to the database.
+
+    -  **6. Quotation Review and Acceptance (Buyer/Admin):**
+       - the buyer (only if it is self managed) can accept or reject the quotation. otherwise the admin can accept or reject the quotation on their behalf.
+        -  Admin reviews quotations for all buyers initially, unless they are self-managed.
+        -  Self-managed buyers can review quotes.
+        -  If a quotation doesn't fulfill all items, order status is updated to "partially filled".
+        -  All suppliers receive a notification about partially filled order, can quote on remaining items.
+         -  The order can be partially filled by multiple suppliers (which will mean multiple statuses with partials like partial-filled, partial-shipped, partial-completed)
+        -  The system tracks which supplier is fulfilling which items.
+        -  Only the accepted quotation is shown, and the supplier is notified of the acceptance.
+        -   **Notifications:**
+            - Suppliers receive in-app notification and email when quotation is accepted/rejected
+            - Admin receives in-app notification when self-managed buyer accepts/rejects quotation
+            - All suppliers receive notification for partial fulfillment opportunities
+            - Email notifications for quotation status changes
+
+    -  **7. Order Shipping and Completion (Buyer/Supplier):**
+          - once one quotation is accepted, the order status is updated to "shipping" and the supplier is notified.
+        -   Buyer is notified when the order is shipped.
+         - once the order arrives at the job site, the buyer is notified and he can confirm the arrival and change the order status to "shipped".
+        -   If an order is partially filled, the status updates to "partially shipped" when one or more suppliers ship items.
+         - the buyer can upload the invoice and the order status is updated to "completed".
+        -   Buyer uploads the invoice, and order status updates to "completed."
+        -   **Notifications:**
+            - Buyer receives in-app notification and email for shipping updates
+            - Admin receives in-app notification for shipping status changes
+            - Buyer receives delivery confirmation request
+            - All parties receive notification when order is completed
+            - Email notifications for shipping milestones
+
+    -  **8. Subscription Management (Admin):**
+        -  Admin can manage all the users and profiles and orders and quotations and notifications and subscription plans and stripe products and stripe prices and stripe payment links.
+        -  Admin manages subscription plans: duration, included orders, pricing.
+        -  Billing cycles are managed, and integrated with payment service.
+        - Admin manages payment links
+        -   **Notifications:**
+            - Buyers receive in-app notification and email for:
+                * Subscription activation/deactivation
+                * Approaching order limit (80% used)
+                * Payment processing
+                * Subscription renewal reminders
+            - Admin receives in-app notification for subscription-related issues
+
+    - **9. Notification Management (Admin):**
+        -   Notification events include order placement, assignment, quotation submission, and order updates.
+        -   Email notifications are supported.
+        -   **Notification Types:**
+            - In-app notifications (real-time updates in the application)
+            - Email notifications (configurable per event type)
+        -   **Email Templates Required:**
+            - Welcome email [email]
+            - Profile approval/rejection [email, in-app]
+            - Order confirmation [email, in-app]
+            - Quotation request [email, in-app]
+            - Quotation status update [email, in-app]
+            - Shipping updates [email, in-app]
+            - Job site invitation [email, in-app]
+            - Subscription status [email, in-app]
+            - Payment confirmation [email, in-app]
+        -   **Notification Settings:**
+            - Users can configure notification preferences
+            - Admin can enable/disable notification types globally
+            - Email frequency controls (instant, digest, off)
+
+    -  **10. Order Payment Configuration:**
+        -   Admin can enable/disable payment requirement for orders at buyer level.
+        -   Payment settings are inherited by all orders from the buyer's configuration.
+        -   Payment status is tracked at individual order level.
+        -   When enabled:
+            - Orders require payment before processing
+            - Payment is handled through Stripe integration
+            - Order status includes payment status
+        -   When disabled:
+            - Orders proceed without payment requirement
+            - Payment-related fields remain inactive
+            - No Stripe integration is triggered
+        -   **Notifications:**
+            - Buyer receives in-app notification and email for:
+                * Payment required
+                * Payment successful
+                * Payment failed
+            - Admin receives in-app notification for payment issues
+    
+    - **11. LLM Integration: Natural Language Order Creation (Buyer):**
+        - Buyers can use natural language to describe the items they want to add to an order.
+        - The system uses a server-side LLM to process the natural language input and extract relevant information.
+        - The server-side LLM takes the current form order items and the user's natural language input as a string.
+        - The LLM parses the combined input to identify and extract order items (name, quantity, unit of measure).
+        - The LLM returns the updated order items as structured data (e.g., JSON).
+        - The `OrderItemSchema` (defined using Zod) is used to define the expected structure of the extracted data and validate the form data before sending it to the backend API.
+        - The Vercel AI SDK (`@ai-sdk/google`) or similar is used to communicate with the LLM server.
+        - The `streamObject` function from the ai-sdk is used to send prompts to the model and receive structured data back (e.g. json).
+        - The `partialObjectStream` allows you to process the generated JSON data in chunks/partials as it comes in instead of waiting for the entire object.
+
+**Data Handling:**
+
+    -   DTOs are used for input validation.
+    -   Mongoose is used for data persistence.
+    -   Create, read, update, and delete (CRUD) operations are implemented for all resources.
+
+**Workflow Notes:**
+    -   Queues are used for background processing of job site and order creation.
+    -   State transitions for orders and quotations are handled by the API.
+    -   The auth module manages authentication and authorization, JWT tokens, and session management.
+    -   External services (payments, storage, etc.) are integrated through utility modules.
+
+**Additional Business Logic:**
+
+    -   **Supplier Selection:** Admin manually selects suppliers based on specified criteria. Supplier communication is primarily via email.
+    -   **Order Status Flow:** pending -> partially filled -> partially shipped -> fully shipped -> partially completed -> fully completed. The status is updated as steps are fulfilled.
+    -   **Subscription Logic:** Plans include a specific number of orders; additional orders incur an overage charge managed by the admin.
+    -   **Buyer Management:** Admin views all order details. Self-managed buyers view and accept/reject quotes. Post-self-management, the admin still has access to order data.
+    -   **General Rules:** The system prioritizes the best quotations and delivery time for buyers.
+
+    - **Job Site Management:**
+        -   **Creation and Management:** Buyers can create and manage job sites with address and contact information.
+        -   **Buyer Invitations:** 
+            - Buyers can generate invitation links and QR codes for their job sites
+            - Invitation links can be shared directly or as QR codes
+            - Invitations have configurable expiration times
+            - Invited buyers can join job sites through invitation links
+            - System tracks invitation status (pending, accepted, expired)
+        -   **Access Control:** Only job site owners can generate invitations
+        -   **Security:** Invitation links are cryptographically secure and single-use
+------------------------------------------------------------------------------------------------------------
+//#endregion business logic
+------------------------------------------------------------------------------------------------------------
+//#region swagger
+------------------------------------------------------------------------------------------------------------
+Controllers must be fully documented with swagger to be fully openapi compliant. Use the following decorators:
+@ApiBasicAuth()	Method / Controller
+@ApiBearerAuth()	Method / Controller
+@ApiBody()	Method
+@ApiConsumes()	Method / Controller
+@ApiCookieAuth()	Method / Controller
+@ApiExcludeController()	Controller
+@ApiExcludeEndpoint()	Method
+@ApiExtension()	Method
+@ApiExtraModels()	Method / Controller
+@ApiHeader()	Method / Controller
+@ApiHideProperty()	Model
+@ApiOAuth2()	Method / Controller
+@ApiOperation()	Method
+@ApiParam()	Method / Controller
+@ApiProduces()	Method / Controller
+@ApiSchema()	Model
+@ApiProperty()	Model
+@ApiPropertyOptional()	Model
+@ApiQuery()	Method / Controller
+@ApiResponse()	Method / Controller
+@ApiSecurity()	Method / Controller
+@ApiTags()	Method / Controller
+@ApiCallbacks()	Method / Controller
+
+Mapped Types:
+When building input validation types (also called DTOs), use the mapped types like `PartialType`, `PickType`, `OmitType`, `IntersectionType` provided by `@nestjs/swagger` to minimize boilerplate.
+------------------------------------------------------------------------------------------------------------
+//#endregion swagger
+------------------------------------------------------------------------------------------------------------
+//#region error handling
+------------------------------------------------------------------------------------------------------------
+The project must use global exception filters and custom exceptions for error management.
+------------------------------------------------------------------------------------------------------------
+//#endregion error handling
+------------------------------------------------------------------------------------------------------------
+//#region data models
+------------------------------------------------------------------------------------------------------------
+Data models must be defined using Mongoose schemas within the `@/schemas/mongo` directory.
+------------------------------------------------------------------------------------------------------------
+//#endregion data models
+------------------------------------------------------------------------------------------------------------
+//#region api versioning
+------------------------------------------------------------------------------------------------------------
+The project must implement API versioning using URI versioning (e.g., `/api/v1/...`).
+------------------------------------------------------------------------------------------------------------
+//#endregion api versioning
+------------------------------------------------------------------------------------------------------------
+//#region pagination and sorting
+------------------------------------------------------------------------------------------------------------
+Pagination must be implemented using `page` and `limit` query parameters.
+Sorting must be implemented using a `sort` query parameter.
+------------------------------------------------------------------------------------------------------------
+//#endregion pagination and sorting
+------------------------------------------------------------------------------------------------------------
+//#region roles and permissions
+------------------------------------------------------------------------------------------------------------
+Role-based authentication and authorization using guards must be applied.
+------------------------------------------------------------------------------------------------------------
+//#endregion roles and permissions
+------------------------------------------------------------------------------------------------------------
+//#region rate limiting and security
+------------------------------------------------------------------------------------------------------------
+Rate limiting, API key authentication, JWT authentication, and other security measures must be implemented.
+------------------------------------------------------------------------------------------------------------
+//#endregion rate limiting and security
+------------------------------------------------------------------------------------------------------------
+//#region future enhancements
+------------------------------------------------------------------------------------------------------------
+Future plans include unit tests, event handling, and other performance and feature improvements.
+------------------------------------------------------------------------------------------------------------
+//#endregion future enhancements
